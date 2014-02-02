@@ -152,6 +152,7 @@
   (define-key clj-refactor-map (funcall key-fn "il") 'cljr-introduce-let)
   (define-key clj-refactor-map (funcall key-fn "el") 'cljr-expand-let)
   (define-key clj-refactor-map (funcall key-fn "ml") 'cljr-move-to-let)
+  (define-key clj-refactor-map (funcall key-fn "mf") 'cljr-move-forms)
   (define-key clj-refactor-map (funcall key-fn "tf") 'cljr-thread-first-all)
   (define-key clj-refactor-map (funcall key-fn "tl") 'cljr-thread-last-all)
   (define-key clj-refactor-map (funcall key-fn "cp") 'cljr-cycle-privacy)
@@ -461,6 +462,130 @@
     (paredit-backward)
     (insert ns "/")
     (paredit-forward)))
+
+;;;###autoload
+(defun cljr-move-forms (beg end)
+  (interactive "r")
+  (let* ((forms (if (region-active-p)
+                    (prog2
+                        (paredit-check-region-for-delete beg end)
+                        (buffer-substring-no-properties beg end)
+                      (delete-region beg end))
+                  (cljr--goto-toplevel)
+                  (prog1 (cljr--delete-and-extract-sexp)
+                    (join-line)
+                    (join-line)
+                    (delete-char 1))))
+         (forms (cljr--cleanup-whitespace forms)))
+    (let (ns refer-p names)
+      (save-window-excursion
+        (let ((require-final-newline 'save))
+          (ido-find-file)
+          (goto-char (point-max))
+          (open-line 1)
+          (forward-line)
+          (insert forms)
+          (save-buffer))
+        (setq ns (cljr--current-namespace)
+              refer-p (y-or-n-p "Refer instead of prefixing the ns?")
+              names (cljr--name-of-forms forms)))
+      (cljr--require ns (when refer-p names))
+      (unless refer-p
+        (save-excursion
+          (cljr--goto-ns)
+          (paredit-forward)
+          (cljr--add-ns-prefix ns names))))))
+
+(defun cljr--cleanup-whitespace (stuff)
+  "Removes blank lines preceding `stuff' as well as trailing whitespace."
+  (with-temp-buffer
+    (insert stuff)
+    (goto-char (point-min))
+    (delete-blank-lines)
+    (when (looking-at "[ \t]*$")
+      (delete-region (point-at-bol) (point-at-eol)))
+    (let ((delete-trailing-lines t))
+      (delete-trailing-whitespace)
+      (buffer-substring-no-properties (point-min) (point-max)))))
+
+(defun cljr--require (ns &optional refer-names)
+  (save-excursion
+    (cljr--goto-ns)
+    (paredit-forward)
+    (let* ((end-of-ns-form (prog1 (point) (paredit-backward)))
+           (ns-present-p (re-search-forward ns end-of-ns-form t))
+           (beg-require-form (progn (paredit-backward) (point)))
+           (refer-present-p (re-search-forward ":refer"  (progn
+                                                           (paredit-forward)
+                                                           (point)) t))
+           (refer-all-p (re-search-forward ":refer :all" (progn
+                                                           (paredit-forward)
+                                                           (point)) t)))
+      (if ns-present-p
+          (unless (or refer-all-p (null refer-names))
+            (if refer-present-p
+                (cljr--append-names-to-refer ns refer-names)
+              ;; :require without refer
+              (goto-char beg-require-form)
+              (paredit-backward-up)
+              (cljr--delete-line)
+              (cljr--new-require-clause ns refer-names)))
+        (cljr--new-require-clause ns refer-names))
+      (when cljr-auto-sort-ns
+        (cljr-sort-ns)))))
+
+(defun cljr--append-names-to-refer (ns names)
+  "Append `names' to :refer vector for `ns'"
+  (save-excursion
+    (cljr--goto-ns)
+    (re-search-forward ":require")
+    (re-search-forward ns)
+    (re-search-forward ":refer")
+    (paredit-forward-down)
+    (let* ((string-of-names (buffer-substring-no-properties
+                             (point)
+                             (progn (paredit-forward-up) (1- (point)))))
+           (bag-of-names (s-split " " string-of-names t))
+           (all-names-to-refer (-concat bag-of-names names)))
+      (paredit-backward-up 1)
+      (cljr--delete-line)
+      (cljr--new-require-clause ns all-names-to-refer))))
+
+(defun cljr--delete-line ()
+  (delete-region (point-at-bol) (line-end-position))
+  (join-line)
+  (delete-char 1))
+
+(defun cljr--new-require-clause (ns &optional refer-names)
+  (cljr--insert-in-ns ":require")
+  (insert "[" ns)
+  (when refer-names
+    (insert " :refer [" (->> refer-names
+                          (s-join " ")
+                          (s-append  "]"))))
+  (insert "]"))
+
+(defun cljr--name-of-forms (string-with-forms)
+  (with-temp-buffer
+    (insert string-with-forms)
+    (goto-char (point-min))
+    (let ((count (paredit-count-sexps-forward))
+          (names '()))
+      (dotimes (_ count)
+        (paredit-forward-down)
+        (push (cljr--name-of-current-def) names)
+        (paredit-forward-up))
+      names)))
+
+(defun cljr--current-namespace ()
+  (save-excursion
+    (cljr--goto-ns)
+    (forward-char)
+    (paredit-forward)
+    (forward-char)
+    (let ((beg (point))
+          (end (progn (paredit-forward) (point))))
+      (buffer-substring-no-properties beg end))))
 
 ;; ------ declare statements -----------
 
