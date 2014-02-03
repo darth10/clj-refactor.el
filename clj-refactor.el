@@ -454,10 +454,13 @@
         (paredit-backward)
         (kill-sexp 2)
         (just-one-space 0)
-        (while (re-search-forward (regexp-opt symbols 'symbols) nil t)
-          (paredit-backward)
-          (insert ns "/")
-          (paredit-forward))))))
+        (cljr--add-ns-prefix ns symbols)))))
+
+(defun cljr--add-ns-prefix (ns symbols)
+  (while (re-search-forward (regexp-opt symbols 'symbols) nil t)
+    (paredit-backward)
+    (insert ns "/")
+    (paredit-forward)))
 
 ;; ------ declare statements -----------
 
