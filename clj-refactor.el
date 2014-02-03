@@ -464,13 +464,15 @@
     (paredit-forward)))
 
 ;;;###autoload
-(defun cljr-move-forms (beg end)
-  (interactive "r")
+(defun cljr-move-forms ()
+  (interactive)
   (let* ((forms (if (region-active-p)
-                    (prog2
-                        (paredit-check-region-for-delete beg end)
-                        (buffer-substring-no-properties beg end)
-                      (delete-region beg end))
+                    (let ((beg (region-beginning))
+                          (end (region-beginning)))
+                      (prog2
+                          (paredit-check-region-for-delete beg end)
+                          (buffer-substring-no-properties beg end)
+                        (delete-region beg end)))
                   (cljr--goto-toplevel)
                   (prog1 (cljr--delete-and-extract-sexp)
                     (join-line)
